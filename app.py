@@ -430,8 +430,8 @@ def page_organismos(df: pd.DataFrame, df_filtered: pd.DataFrame):
         ),
         cliponaxis=False,
     ))
+    fig_barh.update_layout(**_plot_layout(height=max(300, len(grp) * 52 + 60), margin_b=40))
     fig_barh.update_layout(
-        **_plot_layout(height=max(300, len(grp) * 52 + 60), margin_b=40),
         xaxis_title="Facturación (€)",
         yaxis=dict(autorange="reversed", tickfont=dict(size=12)),
         margin=dict(l=10, r=140, t=20, b=40),
@@ -467,8 +467,8 @@ def page_organismos(df: pd.DataFrame, df_filtered: pd.DataFrame):
             x=0.5, y=0.5, showarrow=False,
             font=dict(size=13, color="#2ECC71"),
         )
+        fig_donut.update_layout(**_plot_layout(height=380))
         fig_donut.update_layout(
-            **_plot_layout(height=380),
             showlegend=True,
             legend=dict(
                 orientation="v", yanchor="middle", y=0.5,
@@ -507,8 +507,8 @@ def page_organismos(df: pd.DataFrame, df_filtered: pd.DataFrame):
                 marker_color="#3498DB",
                 hovertemplate="<b>%{x}</b><br>Marca: %{y:,.2f} €<extra></extra>",
             ))
+            fig_stack.update_layout(**_plot_layout(height=380, margin_b=90))
             fig_stack.update_layout(
-                **_plot_layout(height=380, margin_b=90),
                 barmode="stack",
                 xaxis=dict(
                     tickangle=-35,
@@ -637,8 +637,8 @@ def page_vendedores(df: pd.DataFrame, df_filtered: pd.DataFrame):
             hovertemplate="<b>%{x}</b><br>%{y:,.2f} €<extra></extra>",
             cliponaxis=False,
         ))
+        fig_fv.update_layout(**_plot_layout(height=360, margin_b=80))
         fig_fv.update_layout(
-            **_plot_layout(height=360, margin_b=80),
             yaxis_title="Facturación (€)",
             xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
             margin=dict(l=10, r=10, t=20, b=90),
@@ -657,8 +657,8 @@ def page_vendedores(df: pd.DataFrame, df_filtered: pd.DataFrame):
             hovertemplate="<b>%{x}</b><br>%{y:,.2f} €<extra></extra>",
             cliponaxis=False,
         ))
+        fig_tv.update_layout(**_plot_layout(height=360, margin_b=80))
         fig_tv.update_layout(
-            **_plot_layout(height=360, margin_b=80),
             yaxis_title="Ticket medio (€)",
             xaxis=dict(tickangle=-30, tickfont=dict(size=10)),
             margin=dict(l=10, r=10, t=20, b=90),
@@ -700,8 +700,8 @@ def page_vendedores(df: pd.DataFrame, df_filtered: pd.DataFrame):
             ),
             hovertemplate="<b>%{y}</b> · %{x}<br><b>%{z}</b> operaciones<extra></extra>",
         ))
+        fig_hm.update_layout(**_plot_layout(height=max(280, n_vend * 46 + 80), margin_b=50))
         fig_hm.update_layout(
-            **_plot_layout(height=max(280, n_vend * 46 + 80), margin_b=50),
             xaxis=dict(side="bottom", tickangle=0, tickfont=dict(size=9),
                        gridcolor="rgba(0,0,0,0)"),
             yaxis=dict(tickfont=dict(size=11), gridcolor="rgba(0,0,0,0)"),
@@ -788,8 +788,9 @@ def page_temporal(df: pd.DataFrame, df_filtered: pd.DataFrame):
     # ── Tabla diaria base (usada en múltiples gráficos) ───────────────────────
     daily = (
         df_filtered
-        .groupby(df_filtered["Fecha_ES"].dt.date, as_index=False)
+        .groupby(df_filtered["Fecha_ES"].dt.date)
         .agg(Facturación=("Facturación", "sum"), Operaciones=("Facturación", "count"))
+        .reset_index()
     )
     daily.columns = ["Fecha", "Facturación", "Operaciones"]
     daily["Fecha"] = pd.to_datetime(daily["Fecha"])
@@ -859,8 +860,8 @@ def page_temporal(df: pd.DataFrame, df_filtered: pd.DataFrame):
         xgap=2,
         ygap=2,
     ))
+    fig_cal.update_layout(**_plot_layout(height=235, margin_b=45))
     fig_cal.update_layout(
-        **_plot_layout(height=235, margin_b=45),
         xaxis=dict(
             tickvals=xtick_vals,
             ticktext=xtick_text,
@@ -950,8 +951,8 @@ def page_temporal(df: pd.DataFrame, df_filtered: pd.DataFrame):
             hovertemplate="<b>%{x}</b><br>%{y:,.2f} €<extra></extra>",
             cliponaxis=False,
         ))
+        fig_dia.update_layout(**_plot_layout(height=350, margin_b=40))
         fig_dia.update_layout(
-            **_plot_layout(height=350, margin_b=40),
             yaxis_title="Facturación (€)",
             bargap=0.15,
             margin=dict(l=10, r=10, t=20, b=60),
@@ -1001,8 +1002,8 @@ def page_temporal(df: pd.DataFrame, df_filtered: pd.DataFrame):
             yaxis="y2",
             hovertemplate="<b>%{x}</b><br>Acumulado: %{y:,.2f} €<extra></extra>",
         ))
+        fig_cum.update_layout(**_plot_layout(height=390))
         fig_cum.update_layout(
-            **_plot_layout(height=390),
             xaxis_title="Mes",
             yaxis=dict(
                 title="Facturación mensual (€)",
@@ -1188,8 +1189,8 @@ def page_productos(df: pd.DataFrame, df_filtered: pd.DataFrame):
                 x=[None], y=[None], name=tipo,
                 marker_color=col, showlegend=True,
             ))
+        fig_tf.update_layout(**_plot_layout(height=530, margin_b=30))
         fig_tf.update_layout(
-            **_plot_layout(height=530, margin_b=30),
             xaxis_title="Facturación (€)",
             yaxis=dict(autorange="reversed", tickfont=dict(size=9)),
             legend=dict(orientation="h", yanchor="bottom", y=1.01,
@@ -1214,8 +1215,8 @@ def page_productos(df: pd.DataFrame, df_filtered: pd.DataFrame):
                 hovertemplate="<b>%{y}</b><br>%{x:,.0f} uds<extra></extra>",
                 cliponaxis=False,
             ))
+            fig_tu.update_layout(**_plot_layout(height=530, margin_b=30))
             fig_tu.update_layout(
-                **_plot_layout(height=530, margin_b=30),
                 xaxis_title="Unidades",
                 yaxis=dict(autorange="reversed", tickfont=dict(size=9)),
                 margin=dict(l=10, r=80, t=30, b=30),
