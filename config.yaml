@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# FarmaAnalytics — Configuración de usuarios
+#
+# IMPORTANTE: Las contraseñas aquí en texto plano se hashean automáticamente
+# con bcrypt la primera vez que arranca la aplicación. Después de ese primer
+# arranque este archivo tendrá los hashes y NO las contraseñas en claro.
+# ─────────────────────────────────────────────────────────────────────────────
+
+credentials:
+  usernames:
+    admin:
+      email: admin@farmacia.com
+      name: Administrador
+      password: admin123          # Se hashea automáticamente al primer arranque
+      role: admin
+    farmacia1:
+      email: farmacia1@farmacia.com
+      name: Farmacia 1
+      password: farm1pass         # Se hashea automáticamente al primer arranque
+      role: farmacia
+    farmacia2:
+      email: farmacia2@farmacia.com
+      name: Farmacia 2
+      password: farm2pass         # Se hashea automáticamente al primer arranque
+      role: farmacia
+    farmacia3:
+      email: farmacia3@farmacia.com
+      name: Farmacia 3
+      password: farm3pass         # Se hashea automáticamente al primer arranque
+      role: farmacia
+
+cookie:
+  expiry_days: 30
+  key: farmaanalytics_secret_key_cambia_esto_2024   # Cámbialo antes de desplegar
+  name: farmaanalytics_session
+
+preauthorized:
+  emails: []
