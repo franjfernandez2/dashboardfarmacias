@@ -34,7 +34,7 @@ def process_excel(file_bytes: bytes) -> pd.DataFrame:
     Columnas calculadas que añade esta función:
         Facturación         = Cantidad (Unidades) × Pvp
         Diferencia_Gobierno = PVP Facturado - Importe Neto
-        Es_Generico         = True si Código > 600 000
+        Es_Generico         = True si la denominación contiene "EFG" (genérico Unycop)
         Hora_Int            = Hora como entero (0-23)
         Dia_Semana          = nombre del día de la semana (de Fecha_ES)
         Mes                 = nombre del mes (de Fecha_ES)
@@ -100,7 +100,7 @@ def process_excel(file_bytes: bytes) -> pd.DataFrame:
     else:
         df["Diferencia_Gobierno"] = 0.0
 
-    # Es_Generico: código > 600 000
+    # Es_Generico: código > 600.000 (criterio Unycop para EFG)
     if "Código" in df.columns:
         df["Es_Generico"] = df["Código"] > 600_000
     else:
