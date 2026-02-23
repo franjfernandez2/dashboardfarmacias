@@ -1859,7 +1859,7 @@ def page_margenes(df: pd.DataFrame, df_filtered: pd.DataFrame):
 
     # ── KPIs ──────────────────────────────────────────────────────────────
     facturacion_total = df_con_coste["Facturación"].sum() if "Facturación" in df_con_coste.columns else 0
-    margen_total_€    = df_con_coste["Margen_Total"].sum()
+    margen_total_eur  = df_con_coste["Margen_Total"].sum()
     margen_pct_medio  = (
         df_con_coste["Margen_Total"].sum() / facturacion_total * 100
         if facturacion_total > 0 else 0
@@ -1868,7 +1868,7 @@ def page_margenes(df: pd.DataFrame, df_filtered: pd.DataFrame):
     coste_total       = (df_con_coste["PC_Medio"] * df_con_coste.get("Cantidad (Unidades)", 1)).sum()
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("💶 Margen Bruto Total",    euros(margen_total_€))
+    c1.metric("💶 Margen Bruto Total",    euros(margen_total_eur))
     c2.metric("📊 Margen Medio %",        f"{margen_pct_medio:.1f} %")
     c3.metric("🏭 Coste Total",           euros(coste_total))
     c4.metric("🔴 Productos Margen Neg.", f"{int(prods_neg)}")
