@@ -206,22 +206,7 @@ def _render_alertas(df: pd.DataFrame):
     """Panel de alertas inteligentes — usa el dataset completo (sin filtros)."""
     alertas = []
 
-    # ── 1. Roturas de stock ────────────────────────────────────────────────
-    if "Rotura_Stock" in df.columns and "Denominación" in df.columns:
-        roturas = (
-            df[df["Rotura_Stock"]]
-            .groupby("Código")
-            .agg(Denominacion=("Denominación", "first"), N=("Rotura_Stock", "sum"))
-            .nlargest(5, "N")
-        )
-        for _, row in roturas.iterrows():
-            alertas.append({
-                "tipo":  "🔴 ROTURA STOCK",
-                "color": "#E74C3C",
-                "texto": f"{str(row['Denominacion'])[:40]} — {int(row['N'])} ops en negativo",
-            })
-
-    # ── 2. Stock bajo (0–2 uds) ────────────────────────────────────────────
+    # ── 1. Stock crítico (0–2 uds) ─────────────────────────────────────────
     if "Stock_Bajo" in df.columns and "Stock_Actual" in df.columns and "Denominación" in df.columns:
         bajo = (
             df[df["Stock_Bajo"]]
@@ -584,14 +569,14 @@ def page_organismos(df: pd.DataFrame, df_filtered: pd.DataFrame):
 
             fig_stack = go.Figure()
             fig_stack.add_trace(go.Bar(
-                name="Genérico",
+                name="EFG",
                 x=org_list,
                 y=[gen_s.get(o, 0) for o in org_list],
                 marker_color="#2ECC71",
                 hovertemplate="<b>%{x}</b><br>Genérico: %{y:,.2f} €<extra></extra>",
             ))
             fig_stack.add_trace(go.Bar(
-                name="Marca",
+                name="Sin EFG",
                 x=org_list,
                 y=[marca_s.get(o, 0) for o in org_list],
                 marker_color="#3498DB",
@@ -680,13 +665,7 @@ def page_vendedores(df: pd.DataFrame, df_filtered: pd.DataFrame):
         uni = df_filtered.groupby("Vendedor")["Cantidad (Unidades)"].sum().rename("Unidades")
         grp = grp.merge(uni, on="Vendedor", how="left")
 
-    if "Hora_Int" in df_filtered.columns:
-        hact = df_filtered.groupby("Vendedor")["Hora_Int"].nunique().rename("Horas_Activas")
-        grp  = grp.merge(hact, on="Vendedor", how="left")
-    grp["Horas_Activas"] = grp.get("Horas_Activas", 1).fillna(1).clip(lower=1)
-
-    grp["Ticket_Medio"]  = grp["Facturación"] / grp["Operaciones"].replace(0, 1)
-    grp["Fact_por_Hora"] = grp["Facturación"]  / grp["Horas_Activas"]
+    grp["Ticket_Medio"] = grp["Facturación"] / grp["Operaciones"].replace(0, 1)
     grp = grp.sort_values("Facturación", ascending=False).reset_index(drop=True)
 
     # Paleta de colores por vendedor (consistente en todos los gráficos de esta página)
@@ -705,8 +684,6 @@ def page_vendedores(df: pd.DataFrame, df_filtered: pd.DataFrame):
     tbl["Ticket Medio"] = grp["Ticket_Medio"].apply(euros)
     if "Unidades" in grp.columns:
         tbl["Unidades"] = grp["Unidades"].apply(lambda x: f"{x:,.0f}")
-    tbl["Horas Activas"] = grp["Horas_Activas"].apply(lambda x: f"{int(x)}")
-    tbl["Fact. / Hora"]  = grp["Fact_por_Hora"].apply(euros)
 
     st.dataframe(tbl, use_container_width=True, hide_index=True)
 
@@ -798,56 +775,6 @@ def page_vendedores(df: pd.DataFrame, df_filtered: pd.DataFrame):
             margin=dict(l=10, r=90, t=20, b=50),
         )
         st.plotly_chart(fig_hm, use_container_width=True)
-
-    st.markdown("---")
-
-    # ── Línea: evolución semanal de facturación por vendedor ─────────────────
-    st.subheader("📅 Evolución Semanal de Facturación por Vendedor")
-
-    if "Fecha_ES" in df_filtered.columns:
-        df_sem = df_filtered.copy()
-        # Inicio de semana (lunes) como etiqueta temporal
-        df_sem["Semana"] = df_sem["Fecha_ES"] - pd.to_timedelta(
-            df_sem["Fecha_ES"].dt.dayofweek, unit="D"
-        )
-        df_sem["Semana"] = df_sem["Semana"].dt.normalize()
-
-        weekly = (
-            df_sem
-            .groupby(["Semana", "Vendedor"], as_index=False)["Facturación"]
-            .sum()
-        )
-
-        fig_sem = go.Figure()
-        for i, vend in enumerate(vend_order):
-            dv = weekly[weekly["Vendedor"] == vend].sort_values("Semana")
-            if dv.empty:
-                continue
-            fig_sem.add_trace(go.Scatter(
-                x=dv["Semana"],
-                y=dv["Facturación"],
-                name=vend,
-                mode="lines+markers",
-                line=dict(width=2, color=colores_v[i]),
-                marker=dict(size=5, color=colores_v[i]),
-                hovertemplate=(
-                    f"<b>{vend}</b><br>"
-                    "%{x|%d/%m/%Y}<br>"
-                    "%{y:,.2f} €<extra></extra>"
-                ),
-            ))
-
-        fig_sem.update_layout(
-            **_plot_layout(height=390),
-            xaxis_title="Semana (inicio lunes)",
-            yaxis_title="Facturación (€)",
-            hovermode="x unified",
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02,
-                xanchor="right", x=1, bgcolor="rgba(0,0,0,0)",
-            ),
-        )
-        st.plotly_chart(fig_sem, use_container_width=True)
 
     render_footer(df)
 
@@ -1201,7 +1128,7 @@ def page_productos(df: pd.DataFrame, df_filtered: pd.DataFrame):
     if "Es_Generico" in df_filtered.columns:
         gen_first = df_filtered.groupby("Código")["Es_Generico"].first().rename("Es_Generico")
         prod = prod.merge(gen_first, on="Código", how="left")
-        prod["Tipo"] = prod["Es_Generico"].map({True: "Genérico", False: "Marca"}).fillna("N/D")
+        prod["Tipo"] = prod["Es_Generico"].map({True: "EFG (cód>600k)", False: "Sin EFG"}).fillna("N/D")
     else:
         prod["Es_Generico"] = False
         prod["Tipo"] = "N/D"
@@ -1211,23 +1138,23 @@ def page_productos(df: pd.DataFrame, df_filtered: pd.DataFrame):
 
     total_units = prod["Unidades"].sum() if "Unidades" in prod.columns else 1
     total_fact  = prod["Facturación"].sum() or 1
-    gen_units   = prod.loc[prod["Tipo"] == "Genérico", "Unidades"].sum() if "Unidades" in prod.columns else 0
-    gen_fact    = prod.loc[prod["Tipo"] == "Genérico", "Facturación"].sum()
+    gen_units   = prod.loc[prod["Tipo"] == "EFG (cód>600k)", "Unidades"].sum() if "Unidades" in prod.columns else 0
+    gen_fact    = prod.loc[prod["Tipo"] == "EFG (cód>600k)", "Facturación"].sum()
 
     pct_gu = gen_units / total_units * 100
     pct_gf = gen_fact  / total_fact  * 100
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("💊 Genérico — Unidades",  f"{pct_gu:.1f} %",
-                  help="% de unidades dispensadas que son genéricos (código > 600.000)")
+        st.metric("💊 EFG — Unidades",      f"{pct_gu:.1f} %",
+                  help="% de unidades con código > 600.000 (EFG en Unycop)")
     with c2:
-        st.metric("🏷️ Marca — Unidades",     f"{100 - pct_gu:.1f} %")
+        st.metric("🏷️ Sin EFG — Unidades",  f"{100 - pct_gu:.1f} %")
     with c3:
-        st.metric("💶 Genérico — Importe",   f"{pct_gf:.1f} %",
-                  help="% de facturación correspondiente a genéricos")
+        st.metric("💶 EFG — Importe",        f"{pct_gf:.1f} %",
+                  help="% de facturación correspondiente a EFG (código > 600.000)")
     with c4:
-        st.metric("💰 Marca — Importe",      f"{100 - pct_gf:.1f} %")
+        st.metric("💰 Sin EFG — Importe",    f"{100 - pct_gf:.1f} %")
 
     st.markdown("---")
 
@@ -1315,59 +1242,6 @@ def page_productos(df: pd.DataFrame, df_filtered: pd.DataFrame):
         else:
             st.info("Columna 'Cantidad (Unidades)' no disponible.")
 
-    st.markdown("---")
-
-    # ── Barras agrupadas: Top 10 genéricos vs Top 10 marca (por rank) ─────────
-    st.subheader("🔬 Top 10 Genéricos vs Top 10 Marca")
-
-    top10g = prod[prod["Tipo"] == "Genérico"].head(10).reset_index(drop=True)
-    top10m = prod[prod["Tipo"] == "Marca"].head(10).reset_index(drop=True)
-
-    if top10g.empty and top10m.empty:
-        st.info("No hay datos suficientes para la comparativa genérico / marca.")
-    else:
-        n_ranks = max(len(top10g), len(top10m))
-        ranks   = [f"#{i + 1}" for i in range(n_ranks)]
-
-        fig_gm = go.Figure()
-        if not top10g.empty:
-            fig_gm.add_trace(go.Bar(
-                name="Genérico",
-                x=ranks[: len(top10g)],
-                y=top10g["Facturación"],
-                customdata=top10g["Denominación"].str.slice(0, 30),
-                marker_color="#2ECC71",
-                text=[euros(v) for v in top10g["Facturación"]],
-                textposition="outside",
-                textfont=dict(color="#ECF0F1", size=9),
-                hovertemplate="<b>Genérico %{x}</b><br>%{customdata}<br>%{y:,.2f} €<extra></extra>",
-                cliponaxis=False,
-            ))
-        if not top10m.empty:
-            fig_gm.add_trace(go.Bar(
-                name="Marca",
-                x=ranks[: len(top10m)],
-                y=top10m["Facturación"],
-                customdata=top10m["Denominación"].str.slice(0, 30),
-                marker_color="#3498DB",
-                text=[euros(v) for v in top10m["Facturación"]],
-                textposition="outside",
-                textfont=dict(color="#ECF0F1", size=9),
-                hovertemplate="<b>Marca %{x}</b><br>%{customdata}<br>%{y:,.2f} €<extra></extra>",
-                cliponaxis=False,
-            ))
-
-        fig_gm.update_layout(
-            **_plot_layout(height=420, margin_b=50),
-            barmode="group",
-            xaxis_title="Posición en ranking (por facturación dentro de cada tipo)",
-            yaxis_title="Facturación (€)",
-            bargap=0.20,
-            bargroupgap=0.05,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                        xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"),
-        )
-        st.plotly_chart(fig_gm, use_container_width=True)
 
     render_footer(df)
 
@@ -2058,7 +1932,7 @@ def page_stock(df: pd.DataFrame, df_filtered: pd.DataFrame):
 
     # ── Tabla Roturas (existencias negativas) ──────────────────────────────
     st.subheader("🔴 Productos con Rotura de Stock")
-    st.caption("Líneas de venta donde las existencias posteriores fueron negativas")
+    st.caption("Líneas de venta donde las existencias posteriores fueron negativas · Las roturas puntuales (1–2 ops) pueden ser dispensaciones antes de recibir el albarán")
 
     if "Rotura_Stock" in df.columns and prods_rotura > 0:
         df_rot = (
@@ -2074,12 +1948,16 @@ def page_stock(df: pd.DataFrame, df_filtered: pd.DataFrame):
             .reset_index()
             .sort_values("Ops_Rotura", ascending=False)
         )
+        # Indicador visual: rotura real vs puntual
+        df_rot["Tipo"] = df_rot["Ops_Rotura"].apply(
+            lambda x: "🔴 Rotura real" if x >= 3 else "🟠 Puntual"
+        )
         df_rot["Última_Venta"] = df_rot["Última_Venta"].dt.strftime("%d/%m/%Y")
         df_rot.index = range(1, len(df_rot) + 1)
         st.dataframe(
             df_rot.rename(columns={
                 "Ops_Rotura":  "Ops en Rotura",
-                "Stock_Min":   "Stock Mín. Alcanzado",
+                "Stock_Min":   "Stock Mín.",
                 "Stock_Actual":"Stock Actual",
                 "Última_Venta":"Última Venta",
             }),
