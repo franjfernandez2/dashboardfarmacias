@@ -202,9 +202,99 @@ def _plot_layout(title: str = "", height: int = 420, margin_b: int = 50) -> dict
 # PÁGINAS  (estructura base — contenido completo en siguientes versiones)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _render_alertas(df: pd.DataFrame):
+    """Panel de alertas inteligentes — usa el dataset completo (sin filtros)."""
+    alertas = []
+
+    # ── 1. Roturas de stock ────────────────────────────────────────────────
+    if "Rotura_Stock" in df.columns and "Denominación" in df.columns:
+        roturas = (
+            df[df["Rotura_Stock"]]
+            .groupby("Código")
+            .agg(Denominacion=("Denominación", "first"), N=("Rotura_Stock", "sum"))
+            .nlargest(5, "N")
+        )
+        for _, row in roturas.iterrows():
+            alertas.append({
+                "tipo":  "🔴 ROTURA STOCK",
+                "color": "#E74C3C",
+                "texto": f"{str(row['Denominacion'])[:40]} — {int(row['N'])} ops en negativo",
+            })
+
+    # ── 2. Stock bajo (0–2 uds) ────────────────────────────────────────────
+    if "Stock_Bajo" in df.columns and "Stock_Actual" in df.columns and "Denominación" in df.columns:
+        bajo = (
+            df[df["Stock_Bajo"]]
+            .drop_duplicates("Código")
+            .nsmallest(5, "Stock_Actual")
+        )
+        for _, row in bajo.iterrows():
+            alertas.append({
+                "tipo":  "🟡 STOCK CRÍTICO",
+                "color": "#F39C12",
+                "texto": f"{str(row.get('Denominación',''))[:40]} — {int(row['Stock_Actual'])} uds",
+            })
+
+    # ── 3. Vendedor inactivo (últimos 7 días del dataset) ──────────────────
+    if "Fecha_ES" in df.columns and "Vendedor" in df.columns:
+        max_fecha = df["Fecha_ES"].max()
+        corte = max_fecha - pd.Timedelta(days=7)
+        activos_7d = df[df["Fecha_ES"] >= corte]["Vendedor"].unique()
+        todos = df["Vendedor"].dropna().unique()
+        inactivos = [v for v in todos if v not in activos_7d and str(v).strip()]
+        for v in inactivos[:3]:
+            alertas.append({
+                "tipo":  "🟠 VENDEDOR INACTIVO",
+                "color": "#E67E22",
+                "texto": f"{v} — sin ventas en los últimos 7 días",
+            })
+
+    # ── 4. Días laborables sin ventas ──────────────────────────────────────
+    if "Fecha_ES" in df.columns and "Facturación" in df.columns:
+        daily = df.groupby(df["Fecha_ES"].dt.date)["Facturación"].sum().reset_index()
+        daily.columns = ["Fecha", "Fact"]
+        daily["dow"] = pd.to_datetime(daily["Fecha"]).dt.dayofweek
+        ceros_lab = daily[(daily["Fact"] == 0) & (daily["dow"] < 6)]
+        if len(ceros_lab) > 0:
+            alertas.append({
+                "tipo":  "⚫ DÍAS SIN VENTAS",
+                "color": "#9B59B6",
+                "texto": f"{len(ceros_lab)} día(s) laborables sin facturación detectados",
+            })
+
+    if not alertas:
+        st.markdown(
+            '<div style="background:#0d2b1a;border:1px solid #2ECC71;border-radius:10px;'
+            'padding:0.75rem 1.2rem;margin-bottom:1rem;">'
+            '<span style="color:#2ECC71;font-weight:600;">✅ Sin alertas críticas — todo en orden</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown("### 🚨 Alertas Inteligentes")
+    n_cols = min(len(alertas), 3)
+    cols = st.columns(n_cols)
+    for i, alerta in enumerate(alertas[:9]):
+        with cols[i % n_cols]:
+            st.markdown(
+                f'<div style="background:#1a1a2e;border-left:4px solid {alerta["color"]};'
+                f'border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.6rem;">'
+                f'<span style="color:{alerta["color"]};font-weight:700;font-size:0.78rem;">'
+                f'{alerta["tipo"]}</span><br>'
+                f'<span style="color:#ECF0F1;font-size:0.85rem;">{alerta["texto"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    st.markdown("---")
+
+
 def page_resumen(df: pd.DataFrame, df_filtered: pd.DataFrame):
     """Página 1 — Resumen Ejecutivo: 8 KPIs + gráfico diario + gráfico mensual."""
     st.title("📊 Resumen Ejecutivo")
+
+    # ── Panel de alertas inteligentes (usa df completo, no filtrado) ──────
+    _render_alertas(df)
 
     if df_filtered.empty:
         no_data_message()
@@ -1675,6 +1765,178 @@ def page_credito(df: pd.DataFrame, df_filtered: pd.DataFrame):
     render_footer(df)
 
 
+def page_stock(df: pd.DataFrame, df_filtered: pd.DataFrame):
+    """
+    Página 8 — Stock & Rotación.
+    · KPIs: productos en rotura, stock crítico, productos sin movimiento
+    · Tabla de roturas de stock (existencias negativas)
+    · Tabla de stock crítico (0–2 uds)
+    · Histórico de existencias del producto seleccionado
+    """
+    st.title("📦 Stock & Rotación")
+
+    has_stock = "Existencias Posteriores" in df.columns and "Stock_Actual" in df.columns
+
+    if not has_stock:
+        st.warning(
+            "⚠️ El archivo cargado no contiene columnas de existencias "
+            "('Existencias Anteriores' / 'Existencias Posteriores'). "
+            "Exporta el Excel desde Unycop activando estas columnas para "
+            "poder analizar el stock."
+        )
+        render_footer(df)
+        return
+
+    # ── KPIs ──────────────────────────────────────────────────────────────
+    n_roturas    = int(df["Rotura_Stock"].sum())   if "Rotura_Stock" in df.columns else 0
+    n_bajo       = int(df["Stock_Bajo"].sum())     if "Stock_Bajo"   in df.columns else 0
+    prods_rotura = df[df["Rotura_Stock"]]["Código"].nunique() if "Rotura_Stock" in df.columns else 0
+    prods_bajo   = df[df["Stock_Bajo"]]["Código"].nunique()   if "Stock_Bajo"   in df.columns else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🔴 Ops con rotura stock",    f"{n_roturas:,}")
+    c2.metric("📦 Productos en rotura",     f"{prods_rotura:,}")
+    c3.metric("🟡 Ops con stock crítico",   f"{n_bajo:,}")
+    c4.metric("📦 Productos stock crítico", f"{prods_bajo:,}")
+
+    st.markdown("---")
+
+    # ── Tabla Roturas (existencias negativas) ──────────────────────────────
+    st.subheader("🔴 Productos con Rotura de Stock")
+    st.caption("Líneas de venta donde las existencias posteriores fueron negativas")
+
+    if "Rotura_Stock" in df.columns and prods_rotura > 0:
+        df_rot = (
+            df[df["Rotura_Stock"]]
+            .groupby("Código")
+            .agg(
+                Denominación=("Denominación", "first"),
+                Ops_Rotura=("Rotura_Stock", "sum"),
+                Stock_Min=("Existencias Posteriores", "min"),
+                Stock_Actual=("Stock_Actual", "last"),
+                Última_Venta=("Fecha_ES", "max"),
+            )
+            .reset_index()
+            .sort_values("Ops_Rotura", ascending=False)
+        )
+        df_rot["Última_Venta"] = df_rot["Última_Venta"].dt.strftime("%d/%m/%Y")
+        df_rot.index = range(1, len(df_rot) + 1)
+        st.dataframe(
+            df_rot.rename(columns={
+                "Ops_Rotura":  "Ops en Rotura",
+                "Stock_Min":   "Stock Mín. Alcanzado",
+                "Stock_Actual":"Stock Actual",
+                "Última_Venta":"Última Venta",
+            }),
+            use_container_width=True,
+            height=min(400, len(df_rot) * 38 + 60),
+        )
+    else:
+        st.success("✅ No se detectaron roturas de stock en el período.")
+
+    st.markdown("---")
+
+    # ── Tabla Stock Crítico (0-2 uds) ──────────────────────────────────────
+    st.subheader("🟡 Productos con Stock Crítico (0–2 unidades)")
+    st.caption("Basado en la última existencia posterior registrada por producto")
+
+    if "Stock_Bajo" in df.columns and prods_bajo > 0:
+        df_bajo = (
+            df[df["Stock_Bajo"]]
+            .drop_duplicates("Código")
+            .sort_values("Stock_Actual")
+            [["Código", "Denominación", "Stock_Actual", "Fecha_ES"]]
+            .copy()
+        )
+        df_bajo["Fecha_ES"] = df_bajo["Fecha_ES"].dt.strftime("%d/%m/%Y")
+        df_bajo.index = range(1, len(df_bajo) + 1)
+        st.dataframe(
+            df_bajo.rename(columns={
+                "Stock_Actual": "Stock Actual (uds)",
+                "Fecha_ES":     "Fecha Último Movimiento",
+            }),
+            use_container_width=True,
+            height=min(400, len(df_bajo) * 38 + 60),
+        )
+    else:
+        st.success("✅ No hay productos con stock crítico actualmente.")
+
+    st.markdown("---")
+
+    # ── Histórico de existencias de un producto ────────────────────────────
+    st.subheader("📈 Historial de Existencias por Producto")
+
+    if "Denominación" in df.columns:
+        prods_disponibles = (
+            df[["Código", "Denominación"]]
+            .drop_duplicates("Código")
+            .sort_values("Denominación")
+        )
+        opciones = {
+            f"{row['Denominación'][:50]} (cód. {int(row['Código'])})": row["Código"]
+            for _, row in prods_disponibles.iterrows()
+        }
+        sel_label = st.selectbox(
+            "Selecciona un producto:",
+            options=list(opciones.keys()),
+        )
+        sel_codigo = opciones[sel_label]
+
+        df_prod = (
+            df[df["Código"] == sel_codigo]
+            .sort_values("Fecha_ES")
+            [["Fecha_ES", "Existencias Anteriores", "Existencias Posteriores", "Cantidad (Unidades)", "Vendedor"]]
+            .copy()
+        )
+
+        if not df_prod.empty:
+            fig_hist = go.Figure()
+            fig_hist.add_trace(go.Scatter(
+                x=df_prod["Fecha_ES"],
+                y=df_prod["Existencias Anteriores"],
+                name="Existencias Anteriores",
+                mode="lines",
+                line=dict(color="#3498DB", width=1.5, dash="dot"),
+                hovertemplate="%{x|%d/%m/%Y}<br><b>Antes: %{y}</b><extra></extra>",
+            ))
+            fig_hist.add_trace(go.Scatter(
+                x=df_prod["Fecha_ES"],
+                y=df_prod["Existencias Posteriores"],
+                name="Existencias Posteriores",
+                mode="lines+markers",
+                line=dict(color="#2ECC71", width=2),
+                marker=dict(size=4),
+                hovertemplate="%{x|%d/%m/%Y}<br><b>Después: %{y}</b><extra></extra>",
+                fill="tozeroy",
+                fillcolor="rgba(46,204,113,0.08)",
+            ))
+            # Línea de cero (rotura)
+            fig_hist.add_hline(
+                y=0, line_dash="dash", line_color="#E74C3C",
+                annotation_text="Rotura", annotation_font_color="#E74C3C",
+            )
+            fig_hist.update_layout(
+                **_plot_layout(height=360),
+                xaxis_title="Fecha",
+                yaxis_title="Existencias (uds)",
+                hovermode="x unified",
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1, bgcolor="rgba(0,0,0,0)",
+                ),
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+            # Tabla detalle
+            with st.expander("📋 Ver tabla detallada de movimientos"):
+                df_show = df_prod.copy()
+                df_show["Fecha_ES"] = df_show["Fecha_ES"].dt.strftime("%d/%m/%Y")
+                df_show.index = range(1, len(df_show) + 1)
+                st.dataframe(df_show, use_container_width=True, height=300)
+
+    render_footer(df)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR — FILTROS GLOBALES + NAVEGACIÓN
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1730,6 +1992,7 @@ def render_sidebar(df: pd.DataFrame, authenticator):
                 "💊 Productos",
                 "👤 Clientes",
                 "💳 Crédito y Descuentos",
+                "📦 Stock & Rotación",
             ],
             label_visibility="collapsed",
         )
@@ -1995,6 +2258,7 @@ def main():
         "💊 Productos"            : page_productos,
         "👤 Clientes"             : page_clientes,
         "💳 Crédito y Descuentos" : page_credito,
+        "📦 Stock & Rotación"     : page_stock,
     }
 
     page_fn = page_router.get(pagina, page_resumen)
