@@ -1765,6 +1765,261 @@ def page_credito(df: pd.DataFrame, df_filtered: pd.DataFrame):
     render_footer(df)
 
 
+def page_margenes(df: pd.DataFrame, df_filtered: pd.DataFrame):
+    """
+    Página 8 — Análisis de Márgenes.
+    Cruza el Control de Ventas con las Líneas de Albarán para calcular
+    margen real (€ y %) por producto, organismo y vendedor.
+    """
+    st.title("💰 Análisis de Márgenes")
+
+    from data_processor import process_albaranes, merge_ventas_albaranes
+
+    # ── Upload de albaranes ────────────────────────────────────────────────
+    if "df_alb" not in st.session_state or st.session_state["df_alb"] is None:
+        st.markdown(
+            """
+            <div style="background:#16213e;border:2px dashed #F39C12;border-radius:14px;
+                        padding:2rem 2.5rem;margin-bottom:1.5rem;">
+                <h3 style="color:#F39C12;text-align:center;margin-top:0;">
+                    📂 Sube las Líneas de Albarán
+                </h3>
+                <p style="color:#BDC3C7;text-align:center;">
+                    Exporta desde Unycop <strong>Líneas de Albarán</strong> del mismo período
+                    que tu Control de Ventas.<br>
+                    Puedes subir <strong>múltiples archivos</strong> a la vez (uno por mes, por ejemplo).
+                </p>
+                <hr style="border-color:#F39C12;opacity:0.3;">
+                <p style="color:#95A5A6;font-size:0.85rem;text-align:center;margin:0;">
+                    Columnas necesarias: <strong>Código · Denominación · Ped · P.V.P. · Mg.1 · PV.Alb · P.C. · Mg.2</strong>
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        alb_files = st.file_uploader(
+            "Sube los archivos de Líneas de Albarán (.xls / .xlsx)",
+            type=["xls", "xlsx"],
+            accept_multiple_files=True,
+            key="alb_uploader",
+        )
+        if alb_files:
+            with st.spinner("⏳ Procesando albaranes…"):
+                try:
+                    files_bytes = tuple(
+                        (f.name, f.read()) for f in alb_files
+                    )
+                    df_alb = process_albaranes(files_bytes)
+                    st.session_state["df_alb"] = df_alb
+                    st.success(
+                        f"✅ {len(alb_files)} archivo(s) cargado(s) — "
+                        f"**{len(df_alb):,} líneas** · "
+                        f"**{df_alb['Código'].nunique():,} productos únicos**"
+                    )
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error procesando albaranes: {e}")
+        render_footer(df)
+        return
+
+    # ── Albaranes cargados ─────────────────────────────────────────────────
+    df_alb = st.session_state["df_alb"]
+
+    col_info, col_reset = st.columns([5, 1])
+    with col_info:
+        st.success(
+            f"✅ Albaranes cargados: **{len(df_alb):,} líneas** · "
+            f"**{df_alb['Código'].nunique():,} productos**"
+        )
+    with col_reset:
+        if st.button("🔄 Cambiar", use_container_width=True):
+            st.session_state.pop("df_alb", None)
+            st.session_state.pop("df_merged", None)
+            st.rerun()
+
+    # ── Cruzar datos ───────────────────────────────────────────────────────
+    # Usamos df_filtered para respetar los filtros del sidebar
+    cache_key = f"df_merged_{id(df_filtered)}_{id(df_alb)}"
+    if st.session_state.get("df_merged") is None:
+        with st.spinner("🔗 Cruzando ventas con albaranes…"):
+            df_m = merge_ventas_albaranes(df_filtered.copy(), df_alb)
+            st.session_state["df_merged"] = df_m
+    else:
+        # Recalcular si cambian los filtros (el len es proxy rápido)
+        if len(st.session_state["df_merged"]) != len(df_filtered):
+            df_m = merge_ventas_albaranes(df_filtered.copy(), df_alb)
+            st.session_state["df_merged"] = df_m
+        else:
+            df_m = st.session_state["df_merged"]
+
+    df_con_coste = df_m[df_m["Tiene_Coste"]]
+    cobertura = len(df_con_coste) / len(df_m) * 100 if len(df_m) > 0 else 0
+
+    st.markdown("---")
+
+    # ── KPIs ──────────────────────────────────────────────────────────────
+    facturacion_total = df_con_coste["Facturación"].sum() if "Facturación" in df_con_coste.columns else 0
+    margen_total_€    = df_con_coste["Margen_Total"].sum()
+    margen_pct_medio  = (
+        df_con_coste["Margen_Total"].sum() / facturacion_total * 100
+        if facturacion_total > 0 else 0
+    )
+    prods_neg         = (df_con_coste.groupby("Código")["Margen_Euro"].mean() < 0).sum()
+    coste_total       = (df_con_coste["PC_Medio"] * df_con_coste.get("Cantidad (Unidades)", 1)).sum()
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("💶 Margen Bruto Total",    euros(margen_total_€))
+    c2.metric("📊 Margen Medio %",        f"{margen_pct_medio:.1f} %")
+    c3.metric("🏭 Coste Total",           euros(coste_total))
+    c4.metric("🔴 Productos Margen Neg.", f"{int(prods_neg)}")
+    c5.metric("🎯 Cobertura albaranes",   f"{cobertura:.1f} %",
+              help="% de líneas de venta con precio de coste encontrado en albaranes")
+
+    st.markdown("---")
+
+    # ── Tabla TOP productos por Margen Total € ────────────────────────────
+    st.subheader("🏆 Ranking de Productos por Margen Total")
+
+    prod_mg = (
+        df_con_coste.groupby("Código")
+        .agg(
+            Denominación=("Denominación", "first"),
+            Unidades=("Cantidad (Unidades)", "sum"),
+            Facturación=("Facturación", "sum"),
+            Margen_Total=("Margen_Total", "sum"),
+            PC_Medio=("PC_Medio", "mean"),
+            Mg2_Medio=("Mg2_Medio", "mean"),
+        )
+        .reset_index()
+        .sort_values("Margen_Total", ascending=False)
+    )
+    prod_mg["Margen_%"] = prod_mg["Margen_Total"] / prod_mg["Facturación"].replace(0,1) * 100
+
+    col_top, col_bot = st.columns(2)
+
+    with col_top:
+        st.markdown("##### ✅ Top 20 mayor margen")
+        top20 = prod_mg.head(20).copy()
+        top20["Denominación"] = top20["Denominación"].str[:35]
+        fig_top = go.Figure(go.Bar(
+            x=top20["Margen_Total"].values[::-1],
+            y=top20["Denominación"].values[::-1],
+            orientation="h",
+            marker=dict(
+                color=top20["Margen_%"].values[::-1],
+                colorscale=[[0,"#1a4a2e"],[0.5,"#2ECC71"],[1,"#F39C12"]],
+                showscale=True,
+                colorbar=dict(title=dict(text="Mg%",font=dict(color="#ECF0F1")),
+                              tickfont=dict(color="#ECF0F1")),
+            ),
+            text=[euros(v) for v in top20["Margen_Total"].values[::-1]],
+            textposition="outside",
+            textfont=dict(color="#ECF0F1", size=9),
+            hovertemplate="<b>%{y}</b><br>Margen: %{x:,.2f} €<extra></extra>",
+            cliponaxis=False,
+        ))
+        fig_top.update_layout(**_plot_layout(height=560))
+        fig_top.update_layout(yaxis=dict(autorange=True, tickfont=dict(size=9)),
+                               margin=dict(l=10,r=90,t=20,b=30))
+        st.plotly_chart(fig_top, use_container_width=True)
+
+    with col_bot:
+        st.markdown("##### 🔴 Top 20 peor margen (incluye negativos)")
+        bot20 = prod_mg.tail(20).copy()
+        bot20["Denominación"] = bot20["Denominación"].str[:35]
+        colors_neg = ["#E74C3C" if v < 0 else "#E67E22" for v in bot20["Margen_Total"].values[::-1]]
+        fig_bot = go.Figure(go.Bar(
+            x=bot20["Margen_Total"].values[::-1],
+            y=bot20["Denominación"].values[::-1],
+            orientation="h",
+            marker_color=colors_neg,
+            text=[euros(v) for v in bot20["Margen_Total"].values[::-1]],
+            textposition="outside",
+            textfont=dict(color="#ECF0F1", size=9),
+            hovertemplate="<b>%{y}</b><br>Margen: %{x:,.2f} €<extra></extra>",
+            cliponaxis=False,
+        ))
+        fig_bot.update_layout(**_plot_layout(height=560))
+        fig_bot.update_layout(yaxis=dict(autorange=True, tickfont=dict(size=9)),
+                               margin=dict(l=10,r=90,t=20,b=30))
+        st.plotly_chart(fig_bot, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Margen por organismo ───────────────────────────────────────────────
+    st.subheader("🏥 Margen por Organismo")
+
+    if "Organismo_Grupo" in df_con_coste.columns:
+        org_mg = (
+            df_con_coste.groupby("Organismo_Grupo")
+            .agg(
+                Facturación=("Facturación", "sum"),
+                Margen_Total=("Margen_Total", "sum"),
+                Ops=("Facturación", "count"),
+            )
+            .reset_index()
+            .sort_values("Margen_Total", ascending=False)
+        )
+        org_mg["Margen_%"] = org_mg["Margen_Total"] / org_mg["Facturación"].replace(0,1) * 100
+
+        c_izq, c_der = st.columns(2)
+        with c_izq:
+            fig_org = go.Figure(go.Bar(
+                x=org_mg["Organismo_Grupo"],
+                y=org_mg["Margen_Total"],
+                marker_color=[_ORG_COLORS[i % len(_ORG_COLORS)] for i in range(len(org_mg))],
+                text=[euros(v) for v in org_mg["Margen_Total"]],
+                textposition="outside",
+                textfont=dict(color="#ECF0F1", size=10),
+                hovertemplate="<b>%{x}</b><br>Margen: %{y:,.2f} €<extra></extra>",
+                cliponaxis=False,
+            ))
+            fig_org.update_layout(**_plot_layout(height=360),
+                                   yaxis_title="Margen Total (€)")
+            st.plotly_chart(fig_org, use_container_width=True)
+
+        with c_der:
+            fig_pct = go.Figure(go.Bar(
+                x=org_mg["Organismo_Grupo"],
+                y=org_mg["Margen_%"],
+                marker_color=[_ORG_COLORS[i % len(_ORG_COLORS)] for i in range(len(org_mg))],
+                text=[f"{v:.1f}%" for v in org_mg["Margen_%"]],
+                textposition="outside",
+                textfont=dict(color="#ECF0F1", size=10),
+                hovertemplate="<b>%{x}</b><br>Margen: %{y:.1f}%<extra></extra>",
+                cliponaxis=False,
+            ))
+            fig_pct.update_layout(**_plot_layout(height=360),
+                                   yaxis_title="Margen %")
+            st.plotly_chart(fig_pct, use_container_width=True)
+
+    st.markdown("---")
+
+    # ── Tabla detalle completa ─────────────────────────────────────────────
+    st.subheader("📋 Tabla Completa de Márgenes por Producto")
+
+    with st.expander("Ver tabla completa", expanded=False):
+        tbl = prod_mg.copy()
+        tbl.index = range(1, len(tbl)+1)
+        st.dataframe(
+            tbl.assign(**{
+                "Facturación €":  tbl["Facturación"].apply(euros),
+                "Margen Total €": tbl["Margen_Total"].apply(euros),
+                "Coste Medio €":  tbl["PC_Medio"].apply(euros),
+                "Margen %":       tbl["Margen_%"].map("{:.1f}%".format),
+                "Mg.2 albarán":   tbl["Mg2_Medio"].map("{:.1f}%".format),
+                "Unidades":       tbl["Unidades"].apply(lambda x: f"{int(x):,}"),
+            })[[
+                "Código","Denominación","Unidades","Facturación €",
+                "Coste Medio €","Margen Total €","Margen %","Mg.2 albarán",
+            ]].rename(columns={"Denominación":"Producto"}),
+            use_container_width=True,
+            height=420,
+        )
+
+    render_footer(df)
+
+
 def page_stock(df: pd.DataFrame, df_filtered: pd.DataFrame):
     """
     Página 8 — Stock & Rotación.
@@ -1992,6 +2247,7 @@ def render_sidebar(df: pd.DataFrame, authenticator):
                 "💊 Productos",
                 "👤 Clientes",
                 "💳 Crédito y Descuentos",
+                "💰 Márgenes",
                 "📦 Stock & Rotación",
             ],
             label_visibility="collapsed",
@@ -2258,6 +2514,7 @@ def main():
         "💊 Productos"            : page_productos,
         "👤 Clientes"             : page_clientes,
         "💳 Crédito y Descuentos" : page_credito,
+        "💰 Márgenes"             : page_margenes,
         "📦 Stock & Rotación"     : page_stock,
     }
 
