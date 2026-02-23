@@ -29,7 +29,7 @@ def process_excel(file_bytes: bytes) -> pd.DataFrame:
         Fecha, Fecha_ES, Hora, Tipo de Operación, Empresa, Código,
         Denominación, Organismo, Cantidad (Unidades), Pvp, PVP Facturado,
         Importe Bruto, Descuento, Importe Neto, Cliente, Vendedor,
-        Existencias Anteriores (*ignorada*), Existencias Posteriores (*ignorada*)
+        Existencias Anteriores, Existencias Posteriores → usadas para stock y roturas
 
     Columnas calculadas que añade esta función:
         Facturación         = Cantidad (Unidades) × Pvp
@@ -60,9 +60,10 @@ def process_excel(file_bytes: bytes) -> pd.DataFrame:
     # ── 2. Limpiar nombres de columna (quitar espacios extra) ─────────────
     df.columns = df.columns.str.strip()
 
-    # ── 3. Eliminar columnas de existencias (no se usan) ──────────────────
-    cols_to_drop = ["Existencias Anteriores", "Existencias Posteriores"]
-    df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
+    # ── 3. Convertir columnas de existencias a numérico (NO se eliminan)  ─
+    for col in ["Existencias Anteriores", "Existencias Posteriores"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
     # ── 4. Convertir Fecha_ES a datetime ──────────────────────────────────
     if "Fecha_ES" in df.columns:
@@ -129,7 +130,29 @@ def process_excel(file_bytes: bytes) -> pd.DataFrame:
     else:
         df["Organismo_Grupo"] = "OTRAS ENTIDADES"
 
-    # ── 7. Eliminar filas sin fecha válida ────────────────────────────────
+    # ── 7. Columnas derivadas de existencias (stock y roturas) ───────────
+    if "Existencias Posteriores" in df.columns and "Código" in df.columns:
+        # Rotura de stock: existencias posteriores negativas
+        df["Rotura_Stock"] = df["Existencias Posteriores"] < 0
+        # Stock bajo: entre 0 y 2 unidades (sin ser rotura)
+        df["Stock_Bajo"] = (
+            (df["Existencias Posteriores"] >= 0) &
+            (df["Existencias Posteriores"] <= 2)
+        )
+        # Stock actual = última existencia posterior conocida por producto
+        ultimo_stock = (
+            df.sort_values("Fecha_ES")
+            .groupby("Código")["Existencias Posteriores"]
+            .last()
+            .rename("Stock_Actual")
+        )
+        df = df.merge(ultimo_stock, on="Código", how="left")
+    else:
+        df["Rotura_Stock"] = False
+        df["Stock_Bajo"]   = False
+        df["Stock_Actual"] = 0
+
+    # ── 8. Eliminar filas sin fecha válida ────────────────────────────────
     df = df.dropna(subset=["Fecha_ES"]).reset_index(drop=True)
 
     return df
